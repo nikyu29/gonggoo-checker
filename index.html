@@ -817,7 +817,11 @@ Return ONLY a valid JSON array matching this structure without Markdown wrappers
 
             document.getElementById('btnAnalyzeAllReceipts').classList.remove('hidden');
 
-            container.innerHTML = state.receipts.map((rcpt, idx) => `
+            container.innerHTML = state.receipts.map((rcpt, idx) => {
+                const uniqueMatchedCount = new Set(rcpt.matchedItems.map(m => m.noticeItemIndex)).size;
+                const totalMatchedQty = rcpt.matchedItems.reduce((sum, m) => sum + (parseInt(m.matchedQty) || 0), 0);
+
+                return `
                 <div class="bg-white rounded-2xl p-4 border border-slate-200 shadow-sm space-y-3">
                     <div class="flex items-center justify-between">
                         <div class="flex items-center gap-3">
@@ -829,7 +833,7 @@ Return ONLY a valid JSON array matching this structure without Markdown wrappers
                                 </h4>
                                 <p class="text-[11px] text-slate-500">
                                     ${rcpt.isProcessing ? '<span class="text-indigo-600 font-semibold"><i class="fa-solid fa-spinner fa-spin"></i> AI 문자 인식 & 번역 진행 중...</span>' : 
-                                      rcpt.matchedItems.length > 0 ? `<span class="text-emerald-600 font-medium"><i class="fa-solid fa-circle-check"></i> ${rcpt.matchedItems.length}개 항목 확인 완료</span>` : '<span class="text-slate-400">분석 대기 중</span>'}
+                                      rcpt.matchedItems.length > 0 ? `<span class="text-emerald-600 font-medium"><i class="fa-solid fa-circle-check"></i> 등록 물품 ${uniqueMatchedCount}종 (${totalMatchedQty}개) 대조 완료</span>` : '<span class="text-slate-400">등록 물품과 일치하는 항목 없음 / 대기 중</span>'}
                                 </p>
                             </div>
                         </div>
@@ -849,7 +853,7 @@ Return ONLY a valid JSON array matching this structure without Markdown wrappers
                     <div class="bg-slate-50 rounded-xl p-3 border border-slate-100 text-xs space-y-2">
                         <div class="flex justify-between text-[11px] text-slate-500 border-b border-slate-200 pb-1">
                             <span><i class="fa-solid fa-language text-indigo-500"></i> AI 번역 및 인식 결과</span>
-                            <span>매칭 항목: <b class="text-slate-800">${rcpt.matchedItems.length}</b>개</span>
+                            <span>매칭 성공: <b class="text-slate-800">${uniqueMatchedCount}</b>종</span>
                         </div>
                         <div class="text-slate-700 whitespace-pre-wrap leading-relaxed max-h-32 overflow-y-auto text-[11px] font-mono bg-white p-2 rounded-lg border border-slate-200">
 ${escapeHtml(rcpt.translatedText)}
@@ -865,22 +869,9 @@ ${escapeHtml(rcpt.translatedText)}
                     </div>
                     ` : ''}
                 </div>
-            `).join('');
+            `;
+            }).join('');
         }
-
-        function deleteReceipt(id) {
-            state.receipts = state.receipts.filter(r => r.id !== id);
-            renderReceipts();
-            renderComparisonTable();
-            showToast('영수증이 삭제되었습니다.', 'info');
-        }
-
-        async function analyzeAllReceipts() {
-            for (const rcpt of state.receipts) {
-                await analyzeSingleReceipt(rcpt.id);
-            }
-        }
-
         async function analyzeSingleReceipt(receiptId) {
             const rcpt = state.receipts.find(r => r.id === receiptId);
             if (!rcpt) return;
@@ -892,13 +883,19 @@ ${escapeHtml(rcpt.translatedText)}
                 const apiKey = state.apiKey;
                 const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`;
 
-                const targetItemsPrompt = state.items.map(i => `- Name: ${i.name}, Option: ${i.option}, ExpectedQty: ${i.qty}`).join('\n');
+                const targetItemsPrompt = state.items.map((i, idx) => `[Index ${idx}] Name: ${i.name}, Option: ${i.option}, ExpectedQty: ${i.qty}`).join('\n');
 
                 const prompt = `Analyze this purchase receipt / order confirmation screenshot.
-1. Extract all item titles, options, quantities, and prices from the image.
-2. If the original receipt text is in Japanese, Chinese, or English, translate the product titles and options into natural KOREAN.
-3. Compare the extracted items with our Target Notice Items List:
+1. Extract item titles, options, quantities, and prices from the image.
+2. If original receipt text is in Japanese, Chinese, or English, translate product titles and options into natural KOREAN.
+3. Compare extracted items with our Target Notice Items List:
 ${targetItemsPrompt || '(No items specified yet)'}
+
+STRICT MATCHING RULES:
+- "noticeItemIndex" MUST be the exact integer index [0, 1, 2...] of the matched item in Target List.
+- If a receipt line is shipping fee, tax, points, or does NOT match any item in Target List, set "noticeItemIndex" to -1.
+- Merge duplicate lines for the same target item into a SINGLE entry with the combined total "matchedQty".
+- Do NOT output extra non-matching items in "matches" array. Only include valid matches with noticeItemIndex >= 0.
 
 Return ONLY a structured JSON response matching this schema:
 {
@@ -943,14 +940,36 @@ Return ONLY a structured JSON response matching this schema:
                     if (textContent) {
                         const parsedData = JSON.parse(textContent);
                         rcpt.translatedText = parsedData.fullTranslatedText || '인식 완료';
-                        rcpt.matchedItems = parsedData.matches || [];
+                        
+                        if (parsedData.matches && Array.isArray(parsedData.matches)) {
+                            // Filter valid matches strictly within state.items index bounds
+                            const validMatches = parsedData.matches.filter(m => 
+                                m.noticeItemIndex !== undefined && 
+                                m.noticeItemIndex !== null && 
+                                m.noticeItemIndex >= 0 && 
+                                m.noticeItemIndex < state.items.length
+                            );
 
-                        if (parsedData.matches) {
-                            parsedData.matches.forEach(m => {
-                                if (m.noticeItemIndex >= 0 && state.items[m.noticeItemIndex]) {
-                                    state.items[m.noticeItemIndex].isChecked = true;
+                            // Consolidated map by noticeItemIndex to avoid double counting
+                            const consolidated = {};
+                            validMatches.forEach(m => {
+                                const idx = m.noticeItemIndex;
+                                if (!consolidated[idx]) {
+                                    consolidated[idx] = {
+                                        noticeItemIndex: idx,
+                                        matchedName: m.matchedName || state.items[idx].name,
+                                        matchedQty: parseInt(m.matchedQty) || 1,
+                                        matchedUnitPrice: parseInt(m.matchedUnitPrice) || state.items[idx].unitPrice
+                                    };
+                                } else {
+                                    consolidated[idx].matchedQty += (parseInt(m.matchedQty) || 1);
                                 }
+                                state.items[idx].isChecked = true;
                             });
+
+                            rcpt.matchedItems = Object.values(consolidated);
+                        } else {
+                            rcpt.matchedItems = [];
                         }
                     }
                     showToast(`영수증 #${state.receipts.indexOf(rcpt) + 1} 분석 & 대조 성공!`, 'success');
@@ -967,88 +986,6 @@ Return ONLY a structured JSON response matching this schema:
                 renderComparisonTable();
             }
         }
-
-        function simulateReceiptAnalysisFallback(rcpt) {
-            const matches = [];
-            let translatedLines = [];
-
-            state.items.forEach((item, idx) => {
-                matches.push({
-                    noticeItemIndex: idx,
-                    matchedName: `${item.name} (${item.option})`,
-                    matchedQty: item.qty,
-                    matchedUnitPrice: item.unitPrice
-                });
-                translatedLines.push(`• [확인] ${item.name} [${item.option}] - 수량: ${item.qty}개`);
-                item.isChecked = true;
-            });
-
-            rcpt.translatedText = translatedLines.join('\n') || '이미지 텍스트 감지 완료';
-            rcpt.matchedItems = matches;
-            showToast('영수증 이미지 패턴 기반 스마트 대조가 진행되었습니다.', 'info');
-        }
-
-        // --- FINAL COMBINED COMPARISON TABLE & REPORT ---
-        function renderComparisonTable() {
-            const tbody = document.getElementById('comparisonTableBody');
-
-            if (state.items.length === 0) {
-                tbody.innerHTML = `
-                    <tr>
-                        <td colspan="7" class="p-6 text-center text-slate-400">
-                            항목 등록 및 영수증 업로드를 진행하시면 자동으로 대조표가 생성됩니다.
-                        </td>
-                    </tr>`;
-                return;
-            }
-
-            const purchasedMap = {};
-            state.receipts.forEach(rcpt => {
-                rcpt.matchedItems.forEach(m => {
-                    if (m.noticeItemIndex !== undefined && m.noticeItemIndex >= 0) {
-                        purchasedMap[m.noticeItemIndex] = (purchasedMap[m.noticeItemIndex] || 0) + (parseInt(m.matchedQty) || 0);
-                    }
-                });
-            });
-
-            tbody.innerHTML = state.items.map((item, idx) => {
-                const actualQty = purchasedMap[idx] !== undefined ? purchasedMap[idx] : (item.isChecked ? item.qty : 0);
-                
-                let statusBadge = '';
-                if (actualQty >= item.qty && item.qty > 0) {
-                    statusBadge = `<span class="bg-emerald-100 text-emerald-800 text-[11px] font-bold px-2 py-0.5 rounded-full inline-flex items-center gap-1"><i class="fa-solid fa-check"></i> 완료</span>`;
-                } else if (actualQty > 0 && actualQty < item.qty) {
-                    statusBadge = `<span class="bg-amber-100 text-amber-800 text-[11px] font-bold px-2 py-0.5 rounded-full inline-flex items-center gap-1"><i class="fa-solid fa-triangle-exclamation"></i> 부분 구매 (${actualQty}/${item.qty})</span>`;
-                } else {
-                    statusBadge = `<span class="bg-rose-100 text-rose-800 text-[11px] font-bold px-2 py-0.5 rounded-full inline-flex items-center gap-1"><i class="fa-solid fa-xmark"></i> 누락/미확인</span>`;
-                }
-
-                return `
-                    <tr class="hover:bg-slate-50 transition-colors">
-                        <td class="p-3 text-center">
-                            <input type="checkbox" ${item.isChecked ? 'checked' : ''} 
-                                onchange="toggleCheckItem('${item.id}')"
-                                class="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500 cursor-pointer">
-                        </td>
-                        <td class="p-3 font-semibold text-slate-800">${escapeHtml(item.name)}</td>
-                        <td class="p-3 font-medium text-indigo-600">${escapeHtml(item.option)}</td>
-                        <td class="p-3 text-center font-bold text-slate-700">${item.qty}개</td>
-                        <td class="p-3 text-center font-bold ${actualQty >= item.qty ? 'text-emerald-600' : 'text-amber-600'}">${actualQty}개</td>
-                        <td class="p-3 text-right">
-                            <div class="font-medium text-slate-700">${(item.unitPrice).toLocaleString()}원</div>
-                            <div class="text-[10px] text-slate-400">합계: ${(item.qty * item.unitPrice).toLocaleString()}원</div>
-                        </td>
-                        <td class="p-3 text-center">${statusBadge}</td>
-                    </tr>
-                `;
-            }).join('');
-        }
-
-        function copySummaryReport() {
-            if (state.items.length === 0) {
-                showToast('공유할 대조 내역이 없습니다.', 'error');
-                return;
-            }
 
             let report = `📢 [공구 내역 & 구매 영수증 대조 결과]\n\n`;
             let allCompleted = true;
