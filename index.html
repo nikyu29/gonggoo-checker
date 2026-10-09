@@ -43,7 +43,7 @@
                 </div>
                 <div>
                     <h1 class="text-xl sm:text-2xl font-bold tracking-tight">공구 내역 & 영수증 스마트 대조기</h1>
-                    <p class="text-xs text-indigo-100">안내문 분석 ➔ 영수증 이미지 OCR ➔ 한글 번역 ➔ 수량 자동 체크</p>
+                    <p class="text-xs text-indigo-100">자유 텍스트/안내문 분석 ➔ 영수증 OCR ➔ 한글 번역 ➔ 수량 자동 체크</p>
                 </div>
             </div>
             
@@ -72,7 +72,7 @@
                 <div class="flex items-center justify-between mb-3">
                     <h2 class="font-bold text-slate-800 text-base flex items-center gap-2">
                         <span class="w-6 h-6 rounded-full bg-indigo-600 text-white text-xs flex items-center justify-center font-bold">1</span>
-                        공구 1차금 안내문 작성 / 캡처 업로드
+                        공구 안내문 작성 / 캡처 업로드
                     </h2>
                     <button onclick="loadSampleNotice()" class="text-xs font-medium text-indigo-600 hover:text-indigo-800 flex items-center gap-1">
                         <i class="fa-solid fa-wand-magic-sparkles"></i> 예시 입력
@@ -80,18 +80,19 @@
                 </div>
 
                 <p class="text-xs text-slate-500 mb-2">
-                    텍스트를 직접 붙여넣거나 <b>[캡처 업로드]</b> 버튼으로 안내문 캡처본을 올리면 물품이 자동 누적됩니다.
+                    `봉제인형 S 랏코` 처럼 단순하게 적거나, 공구 안내문 양식을 자유롭게 붙여넣으세요.
                 </p>
 
                 <textarea id="noticeInput" rows="7" 
-                    placeholder="예시:
-안녕하세요, 공구주 입니다. 1차금 안내드립니다!
-물품 (갯수) : 아크릴 스탠드 (3개) [시노부, 미츠루, 칸나]
-금액 : 9130 X 3
+                    placeholder="양식 상관없이 자유롭게 작성해 보세요!
 
-물품 (갯수) : 이츠누이 옷 (2개) [블루 / 핑크]
-금액 : 33000 X 2
-총액 : 93,390"
+예시 1 (자유 형태):
+봉제인형 S 랏코 2개 15000원
+아크릴 스탠드 시노부 1개
+
+예시 2 (안내문 형태):
+물품 (갯수) : 아크릴 스탠드 (3개) [시노부, 미츠루, 칸나]
+금액 : 9130 X 3"
                     class="w-full p-3 text-sm rounded-xl border border-slate-300 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all leading-relaxed"></textarea>
 
                 <div class="mt-3 flex gap-2">
@@ -123,7 +124,7 @@
                             <span class="w-6 h-6 rounded-full bg-indigo-600 text-white text-xs flex items-center justify-center font-bold">2</span>
                             구매 확인 물품 목록 (누적)
                         </h2>
-                        <p class="text-xs text-slate-500 mt-0.5">추출된 물품을 확인하거나 직접 추가/수정하세요.</p>
+                        <p class="text-xs text-slate-500 mt-0.5">동일 품명/옵션은 수량이 자동으로 합산됩니다.</p>
                     </div>
                     <div class="flex items-center gap-2">
                         <button onclick="clearAllItems()" class="text-xs bg-rose-50 hover:bg-rose-100 text-rose-600 font-semibold px-2.5 py-1.5 rounded-lg border border-rose-200 transition-colors flex items-center gap-1">
@@ -366,13 +367,13 @@
                     const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`;
 
                     const systemPrompt = `You are a helper for group order managers (공구주). 
-Analyze this screenshot image of a group order notice.
-Extract all purchased items, options, quantities, and prices.
-If multiple character options exist in brackets like [이바라, 하지메], separate them into distinct items.
+Analyze this notice text or screenshot image.
+Extract all items, options, quantities, and prices.
+Even if text is informal like "봉제인형 S 랏코 2개", "누이 옷 핑크 1개", separate product name (e.g., "봉제인형 S") and option/character (e.g., "랏코").
 
 Return ONLY a valid JSON array matching this structure without Markdown wrappers:
 [
-  { "name": "품명", "option": "옵션명", "qty": 1, "unitPrice": 100 }
+  { "name": "품명", "option": "옵션명/캐릭터명", "qty": 1, "unitPrice": 100 }
 ]`;
 
                     const payload = {
@@ -529,11 +530,19 @@ Return ONLY a valid JSON array matching this structure without Markdown wrappers
 
             const systemPrompt = `You are a helper for group order managers (공구주). 
 Analyze the provided notice text and extract all purchased items.
-Separate item options/variations into distinct rows.
+The input text can be either structured notice forms OR simple informal line entries like:
+- "봉제인형 S 랏코 2개 15000원"
+- "아크릴 스탠드 시노부 1"
+- "이츠누이 옷 핑크"
+
+Rules:
+1. Extract Item Name (e.g. "봉제인형 S", "아크릴 스탠드") and Option/Character (e.g. "랏코", "시노부", "핑크").
+2. Default qty to 1 if not specified.
+3. If multiple character options are listed inside brackets like [이바라, 하지메], split them into separate items.
 
 Return ONLY a valid JSON array matching this structure without Markdown wrappers:
 [
-  { "name": "품명", "option": "옵션명", "qty": 1, "unitPrice": 9130 }
+  { "name": "품명", "option": "옵션/캐릭터명", "qty": 1, "unitPrice": 9130 }
 ]`;
 
             const payload = {
@@ -567,15 +576,34 @@ Return ONLY a valid JSON array matching this structure without Markdown wrappers
             let lastQty = 1;
 
             lines.forEach(line => {
-                const itemMatch = line.match(/(?:물품|상품|항목)\s*(?:\(.*?\))?\s*:\s*([^(\[]+)(?:\((\d+)개?\))?\s*(?:\[(.*?)\])?/);
-                if (itemMatch) {
+                const trimmed = line.trim();
+                if (!trimmed || trimmed.startsWith('안녕하세요') || trimmed.startsWith('토스') || trimmed.startsWith('입금') || trimmed.startsWith('총액')) return;
+
+                const itemMatch = trimmed.match(/(?:물품|상품|항목)?\s*(?:\(.*?\))?\s*:\s*([^(\[]+)(?:\((\d+)개?\))?\s*(?:\[(.*?)\])?/);
+                if (itemMatch && itemMatch[1].trim()) {
                     lastItemName = itemMatch[1].trim();
                     lastQty = parseInt(itemMatch[2]) || 1;
                     const opts = itemMatch[3] ? itemMatch[3].split(/[\/,]/).map(o => o.trim()) : ['기본'];
                     lastOptions = opts;
+                } else if (!trimmed.includes(':') && trimmed.length > 2) {
+                    // Simple loose line fallback like "봉제인형 S 랏코 2개"
+                    const parts = trimmed.split(/\s+/);
+                    if (parts.length >= 2) {
+                        const qtyMatch = trimmed.match(/(\d+)\s*개/);
+                        const qty = qtyMatch ? parseInt(qtyMatch[1]) : 1;
+                        const option = parts[parts.length - 1].replace(/\d+개?/, '').trim() || '기본';
+                        const name = parts.slice(0, parts.length - 1).join(' ');
+                        result.push({
+                            name: name,
+                            option: option,
+                            qty: qty,
+                            unitPrice: 0
+                        });
+                        return;
+                    }
                 }
 
-                const priceMatch = line.match(/(?:금액|가격|단가)\s*:\s*([\d,]+)\s*(?:[xX*]\s*(\d+))?/);
+                const priceMatch = trimmed.match(/(?:금액|가격|단가)\s*:\s*([\d,]+)\s*(?:[xX*]\s*(\d+))?/);
                 if (priceMatch && lastItemName) {
                     const lastPrice = parseInt(priceMatch[1].replace(/,/g, '')) || 0;
                     const qtyPerOption = Math.max(1, Math.floor(lastQty / lastOptions.length));
@@ -661,11 +689,11 @@ Return ONLY a valid JSON array matching this structure without Markdown wrappers
                 <div class="bg-slate-50 p-3 rounded-xl border border-slate-200 flex flex-col gap-2 relative group hover:border-indigo-300 transition-colors">
                     <div class="flex items-center gap-2">
                         <span class="text-xs font-bold text-slate-400 w-4">${idx + 1}</span>
-                        <input type="text" value="${escapeHtml(item.name)}" placeholder="품명 (예: 아크릴 스탠드)" 
+                        <input type="text" value="${escapeHtml(item.name)}" placeholder="품명 (예: 봉제인형 S)" 
                             onchange="updateItem('${item.id}', 'name', this.value)"
                             class="flex-1 text-xs font-semibold text-slate-800 bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 focus:ring-1 focus:ring-indigo-500 outline-none">
                         
-                        <input type="text" value="${escapeHtml(item.option)}" placeholder="옵션 (예: 시노부)" 
+                        <input type="text" value="${escapeHtml(item.option)}" placeholder="옵션 (예: 랏코)" 
                             onchange="updateItem('${item.id}', 'option', this.value)"
                             class="w-28 text-xs text-indigo-700 font-medium bg-indigo-50/70 border border-indigo-200 rounded-lg px-2.5 py-1.5 focus:ring-1 focus:ring-indigo-500 outline-none">
                         
